@@ -1,0 +1,19 @@
+{
+  "$comment": "中国大学MOOC（icourse163）课程配置示例。真实文件放 courses/<name>.json（已 gitignore），不写真账号数据。Runner（platforms/icourse163/runner.mjs）实际读取 name/courseUrl/videos/docs 四个字段，platform/settings 为仓库约定（Runner 忽略）。运行手册见 SKILL.md §3。",
+  "platform": "icourse163",
+  "name": "<课程名（学校），例：马克思主义基本原理（某大学）>",
+  "courseUrl": "https://www.icourse163.org/learn/<SCHOOL-COURSEID>?tid=<tid>#/learn/content",
+  "videos": [],
+  "docs": [],
+  "videos$comment": "留空 = 自动发现（推荐）：Runner 扫描课件矩阵，跳过已 learned，视频优先。手动指定时每项为 {\"lesson\": \"<小节名>\", \"cid\": \"<data-cid>\"}，新周发布的内容不会自动进清单，故不推荐。",
+  "docs$comment": "同上。文档任务由 Runner 三轮打开（20/40/60 秒）直至 learned。",
+  "settings": {
+    "mode": "safe",
+    "maxRate": 2,
+    "captchaPolicy": "user",
+    "captchaPolicy$comment": "icourse163 只有易盾滑块（无图形码），策略固定为人工：滑块一律不自动对抗，处理方式=扫码登录重建登录态（SKILL.md 安全规则第 9 条）",
+    "quizPolicy": "read-all-confirm-with-user-then-submit-once",
+    "quizPolicy$comment": "比学习通更严：测验限次，全部读题→拟答案→用户确认→只提交一次（SKILL.md §4.1）",
+    "activeHours": ["08:00", "23:00"]
+  }
+}

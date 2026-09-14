@@ -1,0 +1,14 @@
+{
+  "name": "@mooc-agent-skill/platform-icourse163",
+  "version": "0.1.0",
+  "description": "中国大学MOOC(icourse163) 真实播放 Runner —— mooc-agent-skill 平台适配器",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "node runner.mjs",
+    "login": "node qr-login.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}

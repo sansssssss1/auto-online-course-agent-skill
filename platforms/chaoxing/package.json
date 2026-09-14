@@ -1,0 +1,13 @@
+{
+  "name": "@mooc-agent-skill/platform-chaoxing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "超星学习通真实播放 Runner（无头 Edge + 凭据自适应登录）",
+  "scripts": {
+    "start": "node runner.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}

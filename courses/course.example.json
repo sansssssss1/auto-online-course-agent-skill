@@ -1,0 +1,32 @@
+{
+  "$comment": "课程静态配置示例。真实文件放 courses/<name>.json（已 gitignore），值用占位符，不写真账号数据。字段含义见 docs/architecture.md。", 
+  "platform": "chaoxing",
+  "nodes$comment": "nodes 留空 [] 时 platforms/chaoxing/runner.mjs 自动发现章节（目录页→studentstudy 侧栏 .chapter_item）；显式提供时按表逐节点跑。",
+  "displayName": "<课程名，例：大学物理（电学、磁学）>",
+  "entry": {
+    "catalogUrl": "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=<courseid>&clazzid=<clazzid>&cpi=<cpi>&enc=<enc>",
+    "playerUrlTemplate": "https://mooc1.chaoxing.com/mycourse/studentstudy?chapterId={chapterId}&courseId={courseId}&clazzid={clazzId}&cpi={cpi}&enc={enc}&mooc2=1&hidetype=0&openc={openc}",
+    "sessionParams": {
+      "$comment": "enc/openc 是会话级参数，登录会话内可复用；失效则回目录页重新取",
+      "courseId": "<courseid>",
+      "clazzid": "<clazzid>",
+      "cpi": "<cpi>",
+      "enc": "<enc>",
+      "openc": "<openc>"
+    }
+  },
+  "nodes": [
+    { "order": 1, "name": "1.2.1 教学视频", "chapterId": "<id>", "type": "video" },
+    { "order": 2, "name": "1.2.2 典型习题", "chapterId": "<id>", "type": "video" },
+    { "order": 3, "name": "1.4 章节测验", "chapterId": "<id>", "type": "quiz" },
+    { "order": 4, "name": "<无任务点节点（目录头/阅读文献等）>", "chapterId": "<id>", "type": "skip" }
+  ],
+  "settings": {
+    "mode": "safe",
+    "maxRate": 2,
+    "captchaPolicy": "agent-first",
+    "quizPolicy": "read-all-then-submit-once",
+    "dailyVideoCapAware": true,
+    "activeHours": ["08:00", "23:00"]
+  }
+}

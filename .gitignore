@@ -1,0 +1,33 @@
+# 课程真实配置含账号相关会话参数，绝不入库
+courses/*.json
+!courses/course.example.json
+!courses/icourse163.example.json
+
+# 自适应登录凭据（明文本地文件，绝不入库）
+credentials.local.json
+**/credentials.local.json
+
+# 手动监督模式状态文件（仓库根）
+/state.json
+
+# 本地参考克隆（GPL 上游源码，只读参考，不并入本仓库）
+_ref/
+
+# Runner 登录态（含平台会话凭据，绝不入库）
+**/edge-profile/
+**/storage-state.json
+
+# Runner 运行期产物
+platforms/*/state.json
+platforms/*/runner.log
+platforms/*/*.png
+platforms/*/code.txt
+platforms/*/captcha-code.txt
+platforms/*/qr-meta.json
+
+# 常规
+node_modules/
+__pycache__/
+*.log
+.env
+.DS_Store
