@@ -48,14 +48,31 @@ Runner 与 Supervisor 之间用**状态文件**（`state.json`）+ **暂停原�
 （会话 → 密码 → 兜底），**无历史记忆机制（login-hint 已移除）**。凭据绝不写入日志/状态/仓库，
 账号相关运行数据只保留本地（SKILL.md 安全规则第 10 条）。
 
-## 两根旋钮：模式 = 预设
+## 旋钮：模式 = 预设
 
-用户想要的"省 token 慢速模式 / 多开效率模式 / 安全模式"实际上是两根独立的旋钮：
+用户想要的"省 token 慢速模式 / 多开效率模式 / 安全模式"实际上是几根独立的旋钮：
 
 | 旋钮 | 取值 | 说明 |
 |---|---|---|
 | **介入度** intervention | `tight`（每步确认）/ `balanced`（异常+测验时介入）/ `loose`（仅无法恢复的错误） | 决定 token 消耗与"慢"程度 |
 | **并发度** concurrency | 单账号单开（默认） / 多账号并行 | **同账号严禁多开**，是典型风控信号 |
+| **巡检节奏** cadence | **自适应（默认）** / 固定区间 | 见下方"巡检节奏阶梯"；视频占绝大多数时间，调用数与 token 主要由此决定 |
+
+### 巡检节奏阶梯（2026-09-17 用户要求：运行时自适应，不预设）
+
+不假设哪些小节"纯视频"——一律从短周期起步，按信标信号动态切换（实现见
+`scripts/keepalive.beacon.js` 的 `i`（idle 秒）与 `q`/`p`/`e` 字段）：
+
+| 信标信号 | 策略 |
+|---|---|
+| 起始 / 任何异常后 | 单次调用内 **5.5s 粒度**探测，预算 ~105–119s（实测最优形状） |
+| 连续 ≥2 轮无 `q`/`idle` 异常 | 放大探测间隔 **15s → 30s**（同调用覆盖更长时间 → 调用数↓） |
+| `q=1`（未处理弹题） | 立即回短周期 → SKILL.md §5.2 |
+| `p=1` 持续 / `idle` 持续增长 | 立即回短周期 → 验证式恢复（§3.4） |
+| `e=1` | 核对完成标记 → 下一小节 |
+
+实测基线：1x 视频 104 分钟 / 墙钟 118 分钟 → **工具开销仅 ~12%**，所以节奏优化省的是
+**调用数与 token**，不是墙钟（墙钟由 1x 播放时长决定，锁速课程无法压缩）。
 
 预设（`courses/<name>.json` 里配置）：
 
@@ -74,30 +91,39 @@ Runner 与 Supervisor 之间用**状态文件**（`state.json`）+ **暂停原�
 - `maxRate`：倍速上限（默认 2，即平台官方最高档）。
 - `quizPolicy`：测验提交策略（默认 `read-all-then-submit-once`）。
 
-## 状态文件协议（v0.2）
+## 状态文件协议（v0.3）
 
 v0 草案设想统一的双字段（`paused` 布尔 + `pauseReason` 枚举）；两个 Runner 落地后按实现
-修订为**两形态并存**。字段细节与词表以 SKILL.md §3.1/§4.4/§6 为准。
+修订为**多形态并存**。字段细节与词表以 SKILL.md §3.1/§4.4/§6 为准。
 
-### 浏览器监督模式（学习通备选 — 监督者手写）
+### 浏览器监督模式（学习通备选 — 监督者写，v0.3 实战版）
 
 ```jsonc
-// state.json — 每账号/每课程一份；currentNode 是断点续跑游标
+// state.json（仓库根，已 gitignore）— 断点游标 + 环境事实 + 错题台账
 {
-  "course": "courses/my-course.json",   // 静态课程配置（见 courses/course.example.json）
-  "currentNode": 5,                      // nodes 数组下标
-  "completed": ["<id>", "<id>"],
-  "completedCount": 4, "totalCount": 65,
-  "paused": true,
-  "pauseReason": "quiz",                 // quiz | video-popup | captcha | daily-cap
-                                         // | not-open | error | manual | done
-  "pauseDetail": { "chapterId": "<id>", "questionCount": 5 },
-  "updatedAt": "2026-09-11T15:00:00+08:00"
+  "mode": "browser-supervision",
+  "paused": false, "pauseReason": null,
+  "platform": "chaoxing",
+  "accountNote": "<本次账号提示；凭据本体不入此文件>",
+  "environmentNotes": [                      // 新会话先读：环境事实（可见性/截图限制/倍速锁定）
+    "视频只在 IAB 面板可见时走进度",
+    "学习页截图受限（guest）→ 取题走 canvas/字体映射",
+    "倍速锁定：video.playbackRate 恒为 1，接受 1x"
+  ],
+  "courses": [{
+    "name": "<课程名>", "courseId": "<id>", "clazzid": "<id>", "cpi": "<id>",
+    "taskPointsTotal": 60, "taskPointsDone": 60,
+    "status": "<人读的一句话断点描述>",
+    "scores": { "1.1": 83.3 },
+    "wrongItems": "<错题台账，供后续修正/积累>",
+    "chapterIds": { "1.1": "<chapterId>" }   // 枚举一次，后续直达
+  }],
+  "currentNode": "<续跑游标：下一步做什么>"
 }
 ```
 
-处理约定：写 `paused/pauseReason` 后停止动作 → 按 SKILL.md 异常手册处理 →
-处理完写回 `paused=false` → 从 `currentNode` 继续。
+配套**进度台账**（每小节追加一行，如 `cx-ledger.txt`，仓库外）：
+续跑 = 读 `state.json` + 台账尾 3 行 + `field-notes.md` 最后 3–5 条，**无需回读全文**。
 
 ### Runner 模式（两平台默认 — Runner 写）
 
