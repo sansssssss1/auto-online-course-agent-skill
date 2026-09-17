@@ -466,3 +466,92 @@
   单次调用内 5.5 秒粒度轮询（每次 ~105 秒预算）是当前最省调用的形状
 
 
+### 2026-09-17 13:15 — 【学习通·课程②重大修正】字体混淆表**按页随机**（自举映射跨页无效）+ 测验及格线门禁 + 流程修正若干
+实测现场：课程②《论文写作初阶》3.6（chapterId=1243910816，得分 100）→ 3.7（1243910817，得分 0）。
+
+**1. 字体映射表按页随机生成（推翻上一轮的跨页假设）**
+- 硬证据：同一真实字「题」在 3.6 页 DOM 里是「嶋」，在 3.7 页 DOM 里是「戮」；「问」在 3.6 被混淆为「嶡」，
+  在 3.7 页却是**明文**。用 3.6 页自举出的 35 条映射去解码 3.7 页 → **命中 0/16**。
+- 页面内证据：font-cxsecret 是内嵌 data:application/font-ttf;base64,... 的**每页子集字体**
+  （#cxSecretStyle），cmap 被打乱 → 「码位 ↔ 真实字」的关系每页重新洗牌。这正是上游改用
+  「字形轮廓坐标+flag 的 MD5」反查（不依赖码位）的原因。
+- **结论/风险**：knowledge/cx-font-map.json 这类**按码位**的映射表**只覆盖生成它的那一页**；
+  跨页使用会**静默解出错误文本**（比不解码更危险）；且 merge 工具在冲突时保留旧值，会持续积累错误条目。
+  本会话 3.6 页合并进去的 30 条仅对该页有效。
+- **阶段三候选修法**：把映射键从「码位」改为「字形位图/轮廓哈希」——页面内把每个混淆字符用
+  font-cxsecret 渲染到 canvas 取像素哈希，再用「提交后明文」学「位图哈希 → 真实字」，这样才跨页稳定。
+- 本会话采用口径：**读题一律走页面内 canvas 渲染**；--decode 只在**同一页**内可用（每次提交后自举当页映射）。
+
+**2. 章节测验有「及格线」门禁：0 分不计入任务点（安全规则第 3 条的新输入）**
+- 3.6 提交得 100 → 页眉「已完成…最终成绩100分」，侧栏角标清零。
+- 3.7 只 1 道判断题、我答错 → 0 分 → 平台立刻弹「提示 未达到及格线，请重做」，页眉仍「待完成」，
+  **侧栏角标仍为 1**（该节 2 个任务点只点亮视频那个）→ **未达及格线时任务点不点亮**。
+- 对照：课程② 1.3/1.4/3.3 均 50 分却照常计入 → 门禁不是 60 分线，更可能是「0 分/全错」才拦。
+- **待用户决策**：重做属 SKILL.md 安全规则第 3 条「需逐课程明确授权」的放宽策略，
+  本轮**未擅自重做**，3.7 测验任务点留作待办（页面「重做 (剩余 10 次)」入口仍在）。
+- 作答控件细节：3.7 该题 = li[qid][qtype=3][onclick=addChoice(this)]，
+  判断题的 span.num_option_dx.choice{qid}[data] 取值为 'true'/'false'；隐藏字段 answer{qid}=false。
+
+**3. 「下一节」是页内翻页 → 只读信标存活，无需重注入**
+- 点 #prevNextFocusNext（onclick=PCount.next('2','<chapterId>','<courseId>','<clazzid>','',true)）后
+  URL 的 chapterId 变、页面**未整页刷新** → window.__cx / document.title 上的信标**继续有效**。
+- 同理，学习页侧栏行 span.posCatalog_name[onclick=getTeacherAjax(<courseId>,<clazzid>,<chapterId>)]
+  程序化 click() 也是页内切换，信标同样存活 → 本课程整门课**只需注入一次信标**。
+- 注意：切换后 video 是新的（t=0、duration=NaN、paused=1），要重新点 .vjs-big-play-button 起播
+  （preload=none 不会自播）。
+
+**4. 信标注入形态的坑（tab.playwright.evaluate 通道）**
+- 把 keepalive.beacon.js 包成 new Function("return " + IIFE源码去尾分号 + ";") 注入 →
+  **不报错但页面无任何效果**（window.__cxBeacon 仍 undefined）。
+- 改包成 new Function("try { " + IIFE + "; return 'OK'; } catch(e){ return 'ERR:'+e.message; }")
+  → **一次生效**，且能回报页面内异常。本会话固定用这个形态。
+- 通道差异：locator.evaluate() 里写的 window.__x **不保留**（疑似隔离世界）；
+  tab.playwright.evaluate() 写 window.__x **跨调用保留**。注入/读状态都用后者。
+
+**5. popDiv 家族全部 display:block/visible —— 可见性判据必须用几何量**
+- 顶层文档里的 jobCountDiv（日上限）、popMove（任务点未完成/笔记未保存/继续学习）、
+  popClass（举报）、Marking（提交确认）等**全部** getComputedStyle().display === 'block'、
+  visibility === 'visible'，只有 getBoundingClientRect() 宽高为 0 才是真未触发。
+  → 日上限判据固定为 rect.width > 0，不要看 computed display。
+- 提交确认层会**滞留 DOM**：3.6 提交后的「提示 确认提交？」浮层在 3.7 页面仍在，
+  document.querySelector('.popDiv.Marking') 会命中**旧的那个** → 必须按可视几何过滤后再点，否则点空。
+
+**6. 分任务点完成的实时权威判据 = 学习页侧栏角标**
+- 侧栏行文本尾部带未完成任务点数字（如「3.7 选题的原则（新） 1」），清零即该节全清；
+  比卡片页 .ans-attach-ct.ans-job-finished（一次只在当前页签渲染一个附件）更完整、更实时。
+
+**7. 巡检调用的下界由工具超时决定（对 SKILL.md §3.2 自适应阶梯的修正）**
+- 本环境单次工具调用上限 120s → 单次巡检最多覆盖 ~95s 墙钟，**加大探测间隔并不减少调用数**
+  （只减少调用内的 evaluate 次数）。整门课 1x 真实播放时长 ≈ 调用数 × 95s，这是硬下界。
+- 循环必须带边界守卫 while (Date.now()-t0+STEP <= MAX)，否则最后一次 waitForTimeout 会越过预算把调用拖崩
+  （本会话实测两次 aborted due to timeout；页面不受影响，视频继续播）。
+
+**7b. 按页随机的补充反证（自动化，同日追加）**
+- 用 3.6 页自举的 35 条映射去解 4.1 页（chapterId=1243910818）的乱码题干：
+  `node scripts/fontmap-merge.mjs --decode obf.txt` → **命中 0/218**，输出为无意义文本
+  （「在谋摂阶擺摃搾攄是搿摁?」），反证成立。
+- 附带发现：**被混淆的字符集合本身也按页变化**——4.1 页的**四个选项全是明文**，只有题干里少数几个字被替换；
+  3.6 页则是题干与选项都有混淆。→ 取题只能以「渲染出来的字形」为准，不能依赖某一页的码位集合。
+- 结论不变但更强：**键必须是字形（轮廓/位图哈希）**，与「哪些字被混淆、混淆成哪个码位」都无关；
+  在任一页用「提交后明文」学一次 `字形哈希 → 真实字`，即可跨页复用。这是阶段三该改的东西。
+
+### 2026-09-17 13:5x — 【学习通·IAB】重大环境事实：**认领/切换其他标签页会让视频标签停摆**（新增红线）
+现场：课程② 4.3（chapterId=1243910820，1381s）起播后一直 t=0。
+
+- 现象（易误判为「视频坏/播放器死锁」）：`readyState` 会到 4、`error=null`、`networkState=1`、
+  `.vjs-error-display` 不可见、无任何 popDiv 遮挡；但 `currentTime` 恒为 0，
+  探针在 `paused=true/false` 之间来回抖（因为播放器在反复 play→自暂停），信标 `i` 持续增长到 63/90。
+- 根因：**本会话里我为了侦察课程③，从个人空间标签页点开了第三门课的标签并 `claimTab` 认领** →
+  IAB 面板显示的前台标签变成那一页，课程② 的视频标签退到后台 → 播放器停摆。
+  **注意 `document.visibilityState` 仍报 `'visible'`，`document.hasFocus()` 在正常播放时也仍是 `false`**
+  → 这两个都不能当健康判据；**判据是「本标签是不是 IAB 面板当前显示的那个」**。
+- 处置（已验证有效）：**关掉除视频标签外的所有标签**（`tabs.list()` 里 `id != 视频标签` 的逐个
+  `(await tabs.get(id)).close()`），再 `tabs.get(视频标签)` 激活 + 程序化点 `.vjs-big-play-button` →
+  1x 立即恢复（t 9→20/13s，`i=0`）。
+- 教训/红线：**挂机期间不要在同一 IAB 会话里开/认领别的标签**（包括为了侦察另一门课）。
+  需要侦察别的课 → 先干完当前课，或另起会话/另起 IAB 上下文。
+- 附带修正：`video.pause()` 之后的恢复不要急着重试同一配方。本次我先按 §3.4 做了「验证式恢复
+  （pause()→play()）」，`play()` 返回成功且 `pausedAfter=false`，但 6 秒后又被自暂停 —— 那不是
+  「播放器状态机被写坏」，而是上面的前台被抢。**先排除前台因素，再考虑播放器状态**。
+- API 踩坑：`browser.tabs.get(id)` 返回 Promise，`tab.close()` 必须写成 `(await tabs.get(id)).close()`；
+  写成 `tabs.get(id).close()` 会抛 `close is not a function` 并**中断整个单元格**（本次因此白跑一次）。
