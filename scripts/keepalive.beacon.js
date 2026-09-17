@@ -11,15 +11,18 @@
  *   - 只做三件事：① 保持静音；② 探测**未处理**弹题；③ 把状态写进信标
  *
  * 信标（同时写 document.title / localStorage / window.__cx，供监督者低成本轮询）：
- *   [cx]t=<当前秒>/<总秒>|p=<1暂停|0播放>|e=<1已结束>|q=<1有未处理弹题>|r=<倍速>|i=<进度停滞秒数>
- *   例：[cx]t=352/1261|p=0|e=0|q=0|r=1|i=6
+ *   [cx]t=<当前秒>/<总秒>|p=<1暂停|0播放>|e=<1已结束>|q=<1未处理弹题>|qw=<1答错滞留层>|r=<倍速>|i=<进度停滞秒数>
+ *   例：[cx]t=352/1261|p=0|e=0|q=0|qw=0|r=1|i=6
  *   - 未注入时标题不含 [cx] 前缀（监督者据此判断是否需要重注入）
  *   - `i`（idle 秒数）是**自适应巡检**的输入：i 持续增长 = 视频卡住或已结束，监督者应切短周期
- *   - `q=1` 时**不要代答**，交监督者（弹题流程见 SKILL.md §5.2 / knowledge/chaoxing.md §11）
+ *   - `q=1` = 有未处理弹题，交监督者作答（SKILL.md §5.2 / knowledge/chaoxing.md §11.3）
+ *   - `qw=1` = 存在「回答错误」滞留层：答错了但视频已自动续播，**必须重答**（重选 radio
+ *     再点同一提交键即可）。v1.0 只看 `q` 会把这种情况静默漏掉——实测 1.3 踩过
  *
- * 弹题探测口径（2026-09-16 重大修正）：
- *   - 容器 `.tkTopic` **已答的浮层会滞留 DOM** → 必须排除含「回答错误/回答正确」的文本
- *   - 仅"可见 + 无判定文字"才算未处理弹题
+ * 弹题探测口径（2026-09-16 修正 + 2026-09-18 v1.1 补充）：
+ *   - 容器 `.tkTopic` 已答的浮层会滞留 DOM：含「回答正确」滞留无害；含「回答错误」
+ *     滞留 = 答错未重答，单独以 `qw` 上报
+ *   - 仅"可见 + 无判定文字"才算未处理弹题（q）
  *   - 旧版浮层选择器（`.popups-box` / `.mark_infoDialog` / `[class*="popups"]`）一并兜底
  *
  * 用法：在**顶层文档**执行一次（F12 控制台粘贴；整页跳转后需重注入）。
@@ -56,8 +59,13 @@
     } catch (e) { return false; }
   }
 
-  // 未处理弹题：.tkTopic 可见且不含判定文字；旧版浮层可见即算
+  // 弹题探测（v1.1 修正口径）：
+  //   unhandled     = 未处理弹题（.tkTopic 可见且不含判定文字）→ 监督者需作答
+  //   answeredWrong = 存在含「回答错误/回答不完整」的滞留层 → 答错了但视频已自动续播，
+  //                   **必须重答**（实测直接重选 radio 再点同一提交键即可）
+  //   含「回答正确」的滞留层无害，忽略。旧版浮层可见即算 unhandled。
   function detectPopup(docs) {
+    var r = { unhandled: false, answeredWrong: false };
     for (var i = 0; i < docs.length; i++) {
       try {
         var topics = docs[i].querySelectorAll('.tkTopic');
@@ -65,19 +73,21 @@
           var el = topics[k];
           if (!visible(el)) continue;
           var txt = (el.innerText || '').trim();
-          if (!/回答错误|回答正确|回答不完整/.test(txt)) return true;
+          if (/回答错误|回答不完整/.test(txt)) r.answeredWrong = true;
+          else if (/回答正确/.test(txt)) { /* 已答对，滞留无害 */ }
+          else r.unhandled = true;
         }
       } catch (e) { /* 防御 */ }
       for (var j = 0; j < LEGACY_POPUP_SEL.length; j++) {
         try {
           var els = docs[i].querySelectorAll(LEGACY_POPUP_SEL[j]);
           for (var m = 0; m < els.length; m++) {
-            if (visible(els[m])) return true;
+            if (visible(els[m])) { r.unhandled = true; }
           }
         } catch (e) { /* 防御 */ }
       }
     }
-    return false;
+    return r;
   }
 
   function findVideo(docs) {
@@ -93,7 +103,7 @@
     var s = {
       ts: Date.now(), hasVideo: false, t: null, d: null,
       paused: null, ended: false, rate: null, muted: null,
-      quizPopup: false, idleSec: 0, error: null,
+      quizPopup: false, quizWrong: false, idleSec: 0, error: null,
     };
     try {
       var docs = collectDocs();
@@ -108,7 +118,9 @@
           s.rate = video.playbackRate; s.muted = video.muted;
         } catch (e) { /* 防御 */ }
       }
-      s.quizPopup = detectPopup(docs);
+      var pop = detectPopup(docs);
+      s.quizPopup = pop.unhandled;
+      s.quizWrong = pop.answeredWrong;
 
       // idle：进度是否还在推进（自适应巡检的核心输入）
       if (s.t !== null) {
@@ -127,6 +139,7 @@
       '|p=' + (s.paused === null ? '-' : (s.paused ? 1 : 0)) +
       '|e=' + (s.ended ? 1 : 0) +
       '|q=' + (s.quizPopup ? 1 : 0) +
+      '|qw=' + (s.quizWrong ? 1 : 0) +
       '|r=' + (s.rate === null ? '-' : s.rate) +
       '|i=' + s.idleSec;
     window.__cxBeaconText = beacon;
