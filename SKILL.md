@@ -1,6 +1,6 @@
 ---
 name: auto-online-course-agent-skill
-description: Supervise safe, resumable, headless completion of MOOC task points on 超星学习通 (Chaoxing) and 中国大学MOOC (icourse163) — real playback at ≤2x, adaptive account login (credentials obtained before login, auto channel fallback), background Runners that leave the user's computer free; the agent handles only exceptions. Use when the user asks to 刷课 / 挂机 / 刷网课 / 自动登录并完成学习通(超星)或中国大学MOOC(慕课/mooc/icourse163)的任务点, or to resume an interrupted course run.
+description: Supervise safe, resumable completion of MOOC task points on 超星学习通 (Chaoxing) and 中国大学MOOC (icourse163) — real playback at ≤2x, adaptive account login (user hands over credentials; the agent logs in and re-logs in itself), background Runners that leave the user's computer free, and courses where the teacher has locked the playback rate (accept 1x, read-only beacon polling, in-video popup quizzes and post-video quizzes); the agent handles only exceptions. Use when the user asks to 刷课 / 挂机 / 刷网课 / 自动登录并完成学习通(超星)或中国大学MOOC(慕课/mooc/icourse163)的任务点, or to resume an interrupted course run.
 ---
 
 # auto-online-course-agent-skill — 双平台运行手册（监督者版）
@@ -18,6 +18,9 @@ Runner 脚本；你只处理异常（测验、弹题、验证码、日上限）�
    禁止修改进度接口参数。
 2. **同一账号禁止多开**。多账号并行也须先经用户明确同意。
 3. **测验策略：全部读完 → 全部作答 → 核对 → 只提交一次**。能否重做取决于教师设置。
+   实测学习通观后小测为「**提交即计入任务点，与分数无关**」（页面仍显示"重做(剩余 N 次)"）。
+   放宽策略（如"先提交最优判断 → 再按错题台账用重做机会修正"）**必须逐课程获得用户明确授权**，
+   不得作为默认。
 4. **检测到每日上限（学习通 `jobCountDiv` 提示框；通用信号 = 进度计数当日停止增长）
    → 停止当日视频任务**，整理状态后向用户收工汇报，绝不重试"再多刷一点"。
 5. **导航节奏红线（学习通实测触发过 9010 风控验证码）**：跳页间隔 ≥4 秒、每轮跳页 ≤10 次；
@@ -31,14 +34,22 @@ Runner 脚本；你只处理异常（测验、弹题、验证码、日上限）�
    自动降级下一通道（最终兜底 = 扫码登录交用户），绝不尝试绕过。
 10. **凭据纪律**：账号密码只经环境变量或 `credentials.local.json`（已 gitignore）传递，
     绝不写入日志、状态文件、仓库或对话记录；向用户索取时说明用途与存放位置。
-11. **登录前必问（每次）**：每次登录前，监督者必须先向用户询问**本次**使用哪个账号、
-    用密码还是扫码；**绝不使用任何先前运行、存储或推测的账号信息擅自登录**。
-    账号与密码只由用户在本地提供；运行结束后账号相关数据（profile 会话、凭据、
-    state、日志、二维码/验证码截图）一律**只保留本地**，绝不打包/上传/外发。
+11. **凭据由用户交付、监督者自助登录（用户 2026-09-17 授权）**：开工前向用户索取**本次**
+    账号与凭据（账密或扫码）；**用户交付后，监督者自行登录，登录态掉线时自行重登，
+    不再逐次询问**。凭据只经环境变量或 `credentials.local.json`（本地、已 gitignore）传递，
+    绝不入库/日志/打包/外发；**每次运行开始仍须向用户确认"本次用哪个账号"**，不复用上一次
+    运行残留的凭据或推测；凭据失效且自助重登失败时才回问用户。
 12. **课程即取即用（每次）**：调用时监督者必须先向用户询问**本次要看课程名**，据以临时
     建立课程配置（`courses/<真实课程>.json`，已 gitignore）；**任务完成或中止后立即清除**
     课程相关本地数据——真实课程配置、`state.json`、`runner.log`、调试/二维码/验证码截图
     全部删除，本地只保留 skill 本身、模板与登录态 profile。
+13. **锁速课程（教师锁定倍速）**：`video.playbackRate` 恒为 1、倍速控件整体隐藏（`vjs-hidden`）
+    → **接受 1x 真实播放，不对抗**；**禁止注入 `scripts/keepalive.js` v2.1**（它会把倍速钉成
+    2 = 变相加速），只读巡检改用 `scripts/keepalive.beacon.js`（不写 rate、不调 play/pause，
+    只发信标）。中途弹题与观后题流程见 §3.4 / §5.1 / §5.2。
+14. **探索预算**：遇到未知页面结构，**最多试 2 种已知配方**（配方表见 knowledge/chaoxing.md §13），
+    仍不通就记 field-notes + 切 fallback 继续推进；**禁止连续探索**——实测有会话在同一障碍上
+    连试 4–5 次，纯烧上下文。
 
 ## 1. 平台路由与运行形态
 
@@ -63,13 +74,18 @@ Runner 脚本；你只处理异常（测验、弹题、验证码、日上限）�
 
 0. **询问课程**：本次自动化看哪门课（平台 + 课程名）。据此临时建立课程配置
    （复制对应 example → `courses/<真实课程>.json`，已 gitignore，只在任务期间存在）。
-1. **询问账号**：本次用哪个账号（学习通 / 中国大学MOOC 分别确认）、给密码还是扫码。
-   若该账号的登录态（`edge-profile/` 会话）仍有效，告知用户"可直接续用，无需登录"，
-   经确认后免登；用户要求换号或彻底不保留会话时，改用新 profile 或运行后删除对应
+1. **询问账号与交付方式**：本次用哪个账号（学习通 / 中国大学MOOC 分别确认），凭据由用户交付
+   还是改扫码。若该账号登录态（`edge-profile/` 或 IAB 会话）仍有效，告知用户"可直接续用，
+   无需登录"，经确认后免登；用户要求换号或彻底不保留会话时，改用新 profile 或运行后删除对应
    profile 目录。
-2. **用户给密码** → 只经本次运行的环境变量传入（进程结束即失效，不落盘）；
-   用户明确要求保存时才写入 `credentials.local.json`（本地文件、已 gitignore，
-   绝不入库/打包/日志；多账号用 `name` 区分 + `--account <name>`）。
+2. **用户交付凭据** → 经本次运行的环境变量传入，或写入 `credentials.local.json`
+   （本地文件、已 gitignore，绝不入库/打包/日志；多账号用 `name` 区分 + `--account <name>`）。
+   **获交付后监督者自行登录与自行重登**（安全规则第 11 条）：
+   - **登录态自检**：进入课程前 + 每完成一章，做一次廉价检查（请求课程列表/目录页，
+     看是否被重定向到登录页）；
+   - **失效自愈**：用交付的凭据重新登录（学习通 = IAB 内个人空间/登录页表单或 passport 表单；
+     icourse163 = Runner 自适应链，或 `npm run login` 扫码），**不打断用户**；
+     自助重登失败（验证码/风控拒绝/密码错）才回问用户。
 3. **用户不给密码** → 扫码通道：学习通 Runner 自动截图 `qr.png`；icourse163 跑
    `npm run login` 出 `qr.png` —— 都交用户用对应手机 App 扫码确认。
 4. **运行后（任务完成或中止）**：
@@ -126,15 +142,28 @@ CHAOXING_PROFILE_DIR="<profile 绝对路径>" node runner.mjs --course ../../cou
 
 1. **启动/续跑**：读课程配置与 `state.json`（手动模式用 v0 双字段，见 §6）；打开目录页
    URL 确认登录态；`enc`/`openc` 失效则回目录页重取；从 `currentNode` 继续。
-2. **主循环**（对每个 `type: video` 节点）：
-   - 打开播放页 URL（模板替换 `chapterId` 直达节点）；
-   - 在**顶层文档**注入 `scripts/keepalive.js`（整页跳转后丢失，每次跳转后重注入；
-     监督者远程注入法：F12 → 控制台输入「允许粘贴」→ 粘贴执行。带标题信标的变体
-     `scripts/keepalive.supervisor.js` 会把 `[cx]进度秒/总秒|ENDED|QUIZ` 写进窗口标题，
-     监督者用窗口枚举低成本轮询，无需频繁截图）；
-   - 轮询 `window.__cx`（3 秒一拍）或标题信标；有视频按剩余时长自适应等待；
+2. **主循环**（每个小节通常 = 页签「1 视频」+「2 章节测验」，即 2 个任务点）：
+   - 打开播放页 URL（模板替换 `chapterId` 直达节点）；**新版布局的"下一节"是页内翻页**，
+     不是旧版 `#prevNextFocusNext`（两代布局并存，按实际 DOM 判断）；
+   - 在**顶层文档**注入巡检脚本（整页跳转后丢失，每次重注入）：
+     - **锁速课程 → `scripts/keepalive.beacon.js`**（只读信标：不写倍速、不调 play/pause）；
+     - 未锁速的旧布局课程才用 `scripts/keepalive.js` v2.1（它会钉 2x）；
+     - 远程注入法：F12 → 控制台输入「允许粘贴」→ 粘贴执行；
+   - **轮询信标（低成本）**：`document.title` / `localStorage['cx:beacon']` / `window.__cx`，
+     格式 `[cx]t=秒/总|p=|e=|q=|r=|i=idle秒`；标题无 `[cx]` 前缀 = 需要重新注入；
+   - **自适应巡检阶梯**（不预设哪些小节"纯视频"——按信标动态切换，用户 2026-09-17 要求）：
+
+     | 观察到的信号 | 巡检策略 |
+     |---|---|
+     | 起始 / 任何异常后 | 单次调用内 **5.5 秒粒度**探测，预算 ~105–119s（当前最优形状） |
+     | 连续 ≥2 轮无 `q`/`p` 持续/`idle` 异常 | 放大探测间隔至 **15s → 30s**（同调用覆盖更长时间，调用数↓） |
+     | `q=1`（未处理弹题） | 立即回短周期 → §5.2 作答 |
+     | `p=1` 持续 / `idle` 持续增长 | 立即回短周期 → 验证式恢复（§3.4） |
+     | `e=1` | 核对完成标记 → 翻到下一小节 |
+
+   - 每轮**只回一行**（信标串 + 台账追加），不回显 DOM/JSON（省 token；台账见 §6）；
    - `ended === true` → **先核对平台完成标记**（`icon_Completed`/目录 ✓；ended ≠ 已记录，
-     实测有"假完成"）→ 尽快点 `#prevNextFocusNext` → 等 6 秒 → 重注入保活脚本；
+     实测有"假完成"）→ 尽快翻下一小节 → 重注入；
    - 连续 3 次无视频（约 24 秒）→ 测验/作业页转 §5.1；无任务点节点点下一节跳过；
    - 倍速被锁定 → **接受 1x 真实播放，不对抗**，弹题/观后题走 §5.2/§5.1。
 
@@ -142,8 +171,39 @@ CHAOXING_PROFILE_DIR="<profile 绝对路径>" node runner.mjs --course ../../cou
 
 - 无头 Runner 不受窗口最小化/熄屏影响；浏览器监督模式受焦点/熄屏/锁屏协议约束
   （见 knowledge/chaoxing.md §8.5），这正是 Runner 为默认形态的原因之一。
-- 保活脚本 v2.1 原理：定时器钉 muted/2x/play + video `pause` 事件监听立即重播
-  （页面无焦点时 setInterval 被节流，事件监听不受影响）。
+- **新版播放器（video.js v7，2026-09-16 实测）**：旧版的"无焦点暂停"**不适用**——
+  `hasFocus()===false` 且 `visibilityState==='visible'` 时 1x 持续播放；但课程卡片明确要求
+  「观看时长 ≥ 总时长的 90%（未完成任务点前不可拖拽、**观看时不可离开或将页面最小化**）」
+  → **面板保持可见仍是硬前提**。
+- **取题通道**：进入 studentstudy 后 IAB 截图面被破坏（`guest` / surface preparation timeout）
+  → 一律走页面内通道（DOM 明文 / 字体映射 / canvas 渲染），不要反复试截图。
+- **ckenc（`opencoursenewfy`）一次性**：拿列表页快照里的 ckenc 直接 goto → 404 错误页，
+  必须从个人空间课程卡真实点击进入。
+- 保活脚本 v2.1 原理（**仅用于未锁速的旧布局课程**）：定时器钉 muted/2x/play + video
+  `pause` 事件监听立即重播（页面无焦点时 setInterval 被节流，事件监听不受影响）。
+
+### 3.4 锁速课程（倍速锁定 + 中途弹题 + 观后题）—— 2026-09-16/17 实测
+
+结构：新版目录（`mooc2-ans` 的 `stu` 页）→ 学习页；**每个小节 = 页签「1 视频」+「2 章节测验」**，
+即 2 个任务点。完整选择器与样本见 knowledge/chaoxing.md §11。要点：
+
+- **倍速锁特征**：`div.vjs-playback-rate…` 带 `vjs-hidden`（display:none），内层
+  `button[title="播放速度"]` 的 `aria-disabled` 仍是 false（锁的是控件可见性），
+  `.vjs-playback-rate-value` 只显示「倍速」无数字，`video.playbackRate` 恒为 1
+  → **不要试图解锁，接受 1x**（安全规则第 13 条）。
+- **中途弹题**（`.x-container.ans-timelineobjects` > `.ans-videoquiz` > `.tkTopic`）：
+  题面 **DOM 明文**（无字体混淆）→ 点 `input[type=radio]`（多选 checkbox）→
+  校验 `input.checked === true` → `a#videoquiz-submit` → 判据 `.tkTopic` 消失 / 视频继续；
+  **点 `li` 无效**（自定义 UI 不转发，提交空答案必判错）；答错必须重答直到答对。
+  出现时可能暂停也可能不暂停，若暂停按下方"验证式恢复"处理。
+- **观后题**：`.TiMu.newTiMu`，隐藏字段 `input[name='answer{qid}']` + `answertype`（0 单选/1 多选）；
+  样本无倒计时/限时；**提交即计入任务点，与分数无关**；明细走 §5.1 流程。
+- **读题优先级**：① `knowledge/cx-font-map.json` 自举映射解码 DOM 文本
+  （`node scripts/fontmap-merge.mjs --decode <file>`）；② 页面内 canvas 渲染 PNG；
+  ③ 截图（本环境通常不可用）。
+- **验证式暂停恢复**（别乱点）：先确认当前是暂停态 → 单击一次播放键 → 3 秒后仍 `paused`
+  才做 `pause()→play()`。识别特征：状态读回后 `t` 不增长。静默暂停 3–5 次/段属正常，
+  单击播放键即恢复。
 
 ## 4. 中国大学MOOC — Runner 模式
 
@@ -201,17 +261,24 @@ MOOC_PROFILE_DIR="<profile 绝对路径>" node runner.mjs --course ../../courses
 
 ### 5.1 章节测验 / 作业
 
-**学习通**（实测流程）：
+**学习通**（实测流程，2026-09-16/17 更新）：
 1. 弹「当前章节还有任务点未完成」→ 调页面自身 `closeDeleteWindow()` 关闭
    （同名 `.popClose` 有多个，必须限定作用域）。
-2. 题目文字可能经字体混淆（DOM 乱码）→ **截图读渲染后的文字**，不要信 DOM 文本
-   （`aria-label` 通道可优先试，knowledge §6）。
-3. 逐题读题、记录答案倾向；全部读完再统一作答（最内层 `#frame_content` 按题目索引点
-   选项 radio，A/B/C/D 对应第 0–3 个选项；校验读 hidden `input[name='answer{qid}']`）。
+2. **读题优先级**：① `knowledge/cx-font-map.json` 自举映射解码 DOM 文本（最省；暖机后首选，
+   解码命令 `node scripts/fontmap-merge.mjs --decode <file>`）；② 页面内 canvas 渲染 PNG
+   （文本节点按 computed font `fillText` 后 `toDataURL`）；③ `aria-label` 通道（仅部分明文）；
+   ④ 截图（IAB 进入学习页后通常不可用）。**提交后页面显示明文题干 + 我的答案 + 正确答案**
+   → 立刻用 `scripts/fontmap-merge.mjs` 自举映射（越跑越省 token）。
+3. 逐题读题、记录答案倾向；全部读完再统一作答（最内层 `#frame_content` 按题目索引点选项
+   radio，校验 hidden `input[name='answer{qid}']`；`answertype` 0=单选 1=多选）。
 4. 核对后点「提交」只提交一次：`a.btnSubmit` → 顶层 `.popDiv.Marking` 确认层的「提交」
    `a.jb_btn`；成功判据 = 「已完成 · 第N次作答 · 本次成绩X分」且 `a.btnSubmit` 消失。
    信心不足可用 `pyFlag="1"` 只保存不提交（人工核对后再交）。
-5. 处理测验建议临时 `CHAOXING_HEADED=1` 或在用户自己的浏览器完成（读题需要视觉）。
+   **观后小测（锁速课程）**：`.TiMu.newTiMu`，样本无倒计时，**提交即计入任务点、与分数无关**。
+5. **答题口径**（实测，写入 `state.json` 的 `wrongItems` 台账）：
+   多选**近义选项会同入键**、不同义项不入键；判断题按**课程自身立场**判（非学科常识，
+   例如某课按科斯定理口径把"市场交易能保证资源有效配置"判为「错」）；
+   每题分值 = 100/题量（3 题错 1 = 66.6）。
 
 **中国大学MOOC**（**流程未实测**，首遇按此执行并记 field-notes）：
 测验通常**限次**，纪律更严——先查清限次/倒计时规则再动；
@@ -219,9 +286,19 @@ MOOC_PROFILE_DIR="<profile 绝对路径>" node runner.mjs --course ../../courses
 
 ### 5.2 视频中途弹题
 
-学习通：Runner 以 `quiz-popup` 停下（不代答）；浏览器监督模式下保活脚本检测浮层
-（`__cx.quizPopup === true`）暂停恢复。流程：截图读题 → 作答 → 确认浮层关闭 → 恢复。
-读不了的题（混淆）截图给用户。（icourse163 未观测到弹题。）
+学习通（**2026-09-16 重大修正后的流程**）：
+1. **检测**：信标 `q=1`——`.tkTopic` 可见且**不含「回答错误/回答正确」**
+   （已答浮层会滞留 DOM，必须排除）；旧布局用 `__cx.quizPopup`。
+2. **读题**：锁速课程的弹题题面是 **DOM 明文**（无字体混淆），无需截图。
+3. **作答**：**点 `input[type=radio]`（多选为 checkbox）——点 `li` 无效**
+   （自定义 UI 不冒泡转发，提交空答案必判错）→ 校验 `input.checked === true`
+   → 点 `a#videoquiz-submit`。
+4. **判据**：`.tkTopic` 消失 / 视频自动继续；**答错必须重答**（重答入口会重现，直到答对——
+   用户观察：答错必须重答通过）。
+5. **恢复**：出现时可能暂停也可能不暂停；若暂停，按 §3.4 的验证式重试恢复播放。
+
+Runner 模式下 Runner 以 `quiz-popup` 停下（不代答），监督者按上述流程处理。
+（icourse163 未观测到弹题。）
 
 ### 5.3 每日上限
 
@@ -245,14 +322,26 @@ MOOC_PROFILE_DIR="<profile 绝对路径>" node runner.mjs --course ../../courses
 页面结构变化、脚本报错等未列举异常：记录到 `docs/field-notes.md`（**只追加**，
 不改旧条目，附日期/URL/原文），能安全重试就重试一次，不能就停下问用户。
 
+**探索预算（硬规则）**：未知结构最多试 2 种已知配方（配方表见 knowledge/chaoxing.md §13），
+仍不通 → 记 field-notes + 切 fallback 继续推进，**不做第 3 次连续探索**。
+实测教训：有会话在同一跨源 iframe 障碍上连试 4–5 次，纯烧上下文。
+
 ## 6. 状态文件
 
 - **Runner 模式（默认，两平台一致，协议 v0.2）**：Runner 每次启动新建并覆盖
   `platforms/<platform>/state.json`，`paused` 为原因字符串或 null + `pausedDetail`，
   另有 `results`/`current`/`done`；**是进度报告不是续跑游标**——续跑 = 重跑 Runner
   （自动发现跳过已完成）。词表见 §3.1 / §4.4。
-- **浏览器监督模式（学习通备选）**：监督者手写仓库根 `state.json`（v0 双字段
-  `paused` 布尔 + `pauseReason` 枚举），`currentNode` 是续跑游标。
+- **浏览器监督模式（学习通备选，协议 v0.3 —— 2026-09-17 实战版）**：监督者维护仓库根
+  `state.json`（已 gitignore），字段：
+  `mode`（`browser-supervision`）/ `paused` / `pauseReason` / `platform` / `accountNote` /
+  `environmentNotes[]`（面板可见性、截图限制、倍速锁定等环境事实，新会话先读）/
+  `courses[]`（`name` / `courseId` / `clazzid` / `cpi` / `taskPointsTotal` / `taskPointsDone` /
+  `status` / `scores` / `wrongItems` / `chapterIds{}`）/ `currentNode`（续跑游标）。
+  另配**进度台账**（每小节追加一行，如仓库外 `cx-ledger.txt`）——上下文压缩后精确续跑用。
+  **续跑 = 读 `state.json` + 台账尾部 3 行 + `field-notes.md` 最后 3–5 条**，无需回读全文。
+- **交接**：模板见 [docs/templates/continue-prompt.md](docs/templates/continue-prompt.md)；
+  **每完成一门课主动交接一次**（别等上下文"很长"——实测两轮 rollout 已达 38MB/51MB）。
 - 共同点：会话可能被压缩，文件不会——关键进度一律落盘后再汇报。
 
 ## 7. 模式
@@ -275,5 +364,13 @@ MOOC_PROFILE_DIR="<profile 绝对路径>" node runner.mjs --course ../../courses
 - ✅ **中国大学MOOC·Runner**：视频/文档流程实战验证（自动发现、扫码登录、看门狗）；
   **2026-09-14 马原课新周 7 视频 + 7 文档全部 learned（14/14）**；测验流程仍未实测
   （按 §5.1 从严执行）
+- ✅ **学习通·锁速课程场景（2026-09-16/17 新增）**：教师锁定倍速 + 中途弹题 + 观后题三段式已打通。
+  《食品营养与食品安全》**60/60 任务点**（30 小节；30 节观后题全部一次提交，27 满分、
+  1.1=83.3、6.3=66.7、7.1=66.6；**37 道中途弹题 36 道首答正确**、1 道重答通过；
+  零验证码、零日上限、零进度异常）；《论文写作初阶》进行中（18/68 起）。
+  本轮新增工具：`scripts/keepalive.beacon.js`（只读信标 + 自适应节奏输入）、
+  `scripts/fontmap-merge.mjs`（字体映射自举 + 解码，自测通过）、
+  `knowledge/cx-font-map.json`（映射表种子）、`docs/templates/continue-prompt.md`。
+  待实战验证：字体映射暖机后的读题省 token 效果、自适应巡检阶梯的实际调用数下降。
 - 多平台知识库：knowledge/chaoxing.md（全流程验证）、knowledge/icourse163.md（视频/文档验证）
 - 新发现的坑一律进 `docs/field-notes.md`（只追加），这是本项目的测试用例库
