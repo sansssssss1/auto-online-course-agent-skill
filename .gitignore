@@ -25,6 +25,20 @@ platforms/*/code.txt
 platforms/*/captcha-code.txt
 platforms/*/qr-meta.json
 
+# 课程内容截图（运行产物；课程题图属课程内容，不入公开仓库）
+courses/quiz-shots/
+docs/evidence/
+
+# 监督模式进度台账与临时采集文件
+/cx-ledger.txt
+cx-ledger.txt
+/cx-mon.mjs
+/obf.txt
+/plain.txt
+
+# 交接兜底导出（push 失败时生成的补丁）
+*.patch
+
 # 常规
 node_modules/
 __pycache__/

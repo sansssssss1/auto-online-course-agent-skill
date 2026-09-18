@@ -166,8 +166,174 @@
 ## 10. 对浏览器路线的启示（策展版）
 
 1. 任务点识别优先读 knowledge/cards 页的 `mArg` JSON，比 DOM 解析稳
-2. 测验选项先试 `aria-label` 通道，绕开字体解密；不行再截图读题
+2. 测验读题四条通道按序试：① 自举字体映射解码 DOM（§12，最省）；② 页面内 canvas 渲染 PNG；
+   ③ `aria-label`（仅部分明文）；④ 截图（IAB 下多不可用）
 3. `pyFlag="1"` 只保存是测验提交的安全阀
 4. 上游 RateLimiter 的节奏参数可直接移植为 Runner 的 wait 策略
 5. 403 + 验证码是核心拦截点，设计成"暂停 + 监督者处理"而不是自动对抗
 6. 弹题处理上游为零 —— keepalive 检测 + 监督者读题是本项目差异点之一
+
+## 11. 锁速课程场景（倍速锁定 + 中途弹题 + 观后题）【实测 2026-09-16/17】
+
+> 验证课程：《食品营养与食品安全》（60/60 完成）、《论文写作初阶》（进行中）。
+> 原始样本见 docs/field-notes.md 2026-09-16/17 条目。
+
+### 11.1 结构与完成口径
+- 新版目录：`mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu` → 章节 iframe `#frame_content-zj`
+  → 行 `.chapter_item#cur{chapterId}`（`onclick="toOld('courseid','chapterId','clazzid',0)"`，
+  小节名在 `title` 属性）；**两代布局并存**，旧布局为 `.posCatalog_select`，两者都要试。
+  点击一律程序化 `el.click()`。
+- 学习页：`mooc1.chaoxing.com/mycourse/studentstudy?chapterId=…`；**每个小节 = 页签
+  「1 视频」+「2 章节测验」**（2 个任务点）；"下一节"是新版**页内翻页**（不是旧版
+  `#prevNextFocusNext`）。
+- 完成口径（cards 页原文）：「观看时长需 ≥ 总时长的 90%（未完成任务点前，当前视频不可拖拽、
+  观看时不可离开或将页面最小化）」→ **时长制，页面必须保持可见**。
+- 侧栏行 `icon_Completed` + 任务点计数（2→1→0）是可靠的分任务点完成信号。
+
+### 11.2 倍速锁定的 DOM 特征
+- 外层 `div.vjs-playback-rate.vjs-menu-button.vjs-menu-button-popup.vjs-control.vjs-button`
+  带 **`vjs-hidden`**（display:none）；内层 `button[title="播放速度"]` 的
+  `aria-disabled` 仍为 false——**锁的是控件可见性，不是 disabled**；
+  `.vjs-playback-rate-value` 只显示「倍速」无数字；`video.playbackRate` 恒为 1。
+- 拖拽锁提示：`#tipDiv .toolTipBox1`（默认 display:none）——「该视频教师已设置限制：
+  未完成任务点前无法拖动或定位进度，完成任务点后即可拖动复习。」
+- **处置：接受 1x，不对抗**（禁注入会写 `playbackRate` 的 keepalive v2.1；
+  只读巡检用 `scripts/keepalive.beacon.js`）。
+
+### 11.3 中途弹题（`.tkTopic`）
+- 容器：`.x-container.ans-timelineobjects`（z-index 101）> `.ans-videoquiz#videoquiz-*`
+  > `.tkTopic` > `.tkTopic_con.tkScroll`；选项 `li.ans-videoquiz-opt > label > span.tkRadio
+  > input[type=radio][name='ans-videoquiz-opt']`（多选为 checkbox）；按钮
+  `a#videoquiz-submit` / `a#videoquiz-submitting` / `a#videoquiz-continue`。
+- **题面 DOM 明文**（无字体混淆），无需截图。
+- **正确流程**：点 `input[type=radio]` → 校验 `checked===true` → `a#videoquiz-submit`
+  → 判据 `.tkTopic` 消失 / 视频继续。**点 `li` 无效**（自定义 UI 不转发，提交空答案必判错——
+  曾有 3 次误判为"平台答案键与教材相反"，实为选项没选上）。
+- 答错必须**重答直到答对**（重答入口重现）；弹题判定不影响任务点与观后题成绩。
+- 出现时**可能暂停也可能不暂停**；已答浮层滞留 DOM → 探测须排除含「回答错误/回答正确」的文本。
+- **【2026-09-18 补充】答错层滞留 + 自动续播 = 静默漏答风险**：首答判「回答错误」后浮层
+  滞留可见、`a#videoquiz-submit` 仍可用（w≈92），视频**自动继续播放** → 只探测"未处理弹题"
+  的话，答错会被当已处理而漏掉。处置：① 信标 v1.1 起单独上报 `qw=1`（答错滞留层），
+  巡检见 `qw=1` 必须重答；② 重答很简单——直接重选对的 `input[type=radio]` → 校验 checked
+  → 再点同一个 `a#videoquiz-submit`，判定层消失。
+- **【2026-09-18 新配方】任务点完成后可合法 seek，用于补答漏网弹题**：弹题若在切节后才
+  冒出（信标 q=1 但人已在下一节），直接重进该节——任务点已点亮 → 拖拽锁解除（平台提示
+  「完成任务点后即可拖动复习」）→ **seek 到结尾 30 秒内即可重触发弹题**，作答通过即闭环。
+  实测：6.2 漏网弹题经此配方补答通过（重进后 t=0 未加载也无需等待，直接 seek）。
+
+### 11.4 观后题（章节测验）
+- cards → `iframe[src*='ananas/modules/work']` → `#frame_content` → `/mooc-ans/api/work`；
+  `.TiMu.newTiMu` × N，隐藏字段 `input[name='answer{qid}']` + `answertype`（0 单选/1 多选）。
+- 样本**无倒计时/限时**；`audioLimitTimesTip` 是音频附件模板，与测验无关。
+- 提交流程：选项 click → 校验 hidden value → `a.btnSubmit` → 顶层 `.popDiv.Marking a.jb_btn`
+  → 判据「已完成·第N次作答·本次成绩X分」。**"提交即计入任务点"不普适**：课程①样本成立，
+  **课程②实测 0 分提交不点亮任务点**（平台要求重做才给）→ 一律以平台标记
+  （`icon_Completed`/侧栏计数）为准；页面另给「重做(剩余 10 次)」入口。
+- 读题：字体混淆只存在于**待作答态**；页面内 canvas 渲染（按 computed font `fillText`
+  → `toDataURL`）可绕过截图限制。
+
+### 11.5 答题口径（实测）
+- 每题分值 = 100/题量（3 题错 1 = 66.6）。
+- 多选：**近义选项会同入键**（如"对主流的问题提出反思"与"对主流问题进行反思"同键 = AC），
+  但语义更远的项不入键。
+- 判断题按**课程自身立场**判，不按学科常识（样本：按科斯定理口径，平台键把
+  "市场交易能够保证资源的有效配置"判为「错」）。
+- 弹题（`.tkTopic`）与观后题成绩互不影响。
+
+### 11.6 环境事实
+- 新版播放器**无焦点暂停行为**：`hasFocus()===false` 且 `visibilityState==='visible'` 时
+  1x 持续播放（旧版 §8.5 的协议不适用）；但完成口径要求页面可见 → 面板仍需保持可见。
+- 进入 studentstudy 后 IAB 截图面被破坏（`guest` / surface preparation timeout）→
+  取题走页面内通道。
+- `ckenc`（opencoursenewfy）**一次性**：拿快照 ckenc 直接 goto → 404 页，必须从个人空间
+  课程卡真实点击进入。
+- 静默暂停 3–5 次/段属正常；恢复用**验证式重试**（先确认 paused → 单击播放键 → 3 秒后
+  仍 paused 才 `pause()→play()`）；识别特征 = 状态读回后 `t` 不增长。
+
+### 11.7 IAB 前台红线与标签管理【实测 2026-09-17，重大】
+- **同一 IAB 会话内 `claimTab`/切换标签 → 视频标签退后台停摆**：`t` 卡 0、paused 抖动，
+  但 `readyState=4`、`error=null`、`visibilityState` 仍 `'visible'`——三件套全正常，
+  **唯一可靠健康判据 = `t` 是否推进**（`hasFocus()` 不可用）。
+- 恢复配方（实测立即生效）：`tabs.list()` 列出全部标签 → 关闭视频标签外的所有标签 →
+  激活视频标签。
+- API 坑：关标签必须 `(await tabs.get(id)).close()`（直接 `tabs.get(id).close()` 抛
+  `close is not a function`）；信标注入必须 `new Function('try {' + IIFE + '; return "OK" }')`
+  （`new Function('return ' + IIFE)` 静默无效）；`enc` 拼直链 goto 必报「enc校验失败」，
+  必须页内点击由页面生成 enc+openc；`.popDiv` 家族全部 `display:block` 滞留 DOM，
+  可见性判断用 `getBoundingClientRect().width > 0`。
+
+### 11.8 重做与分数口径（2026-09-17 用户授权：尽量拿高分，自行推进）
+- **0 分提交可能不点亮任务点**（课程② 3.7 样本：唯一判断题答错 → 0 分 → 未点亮，
+  平台要求重做才给）；课程①"提交即计入"的口径不普适。
+- 重做入口：测验页「重做(剩余 N 次)」；按已知正解/`wrongItems` 台账修正，
+  **直到任务点点亮或余量用尽，无需逐次询问用户**；重做也走完整
+  "读题 → 作答 → 校验 hidden → 提交"流程。
+- 收益实证：课程② 4.1（7 题）4.2（5 题）首轮全对即满分——口径入库后首答正确率显著提升。
+
+### 11.9 杂项配方（2026-09-18 收官轮）
+- **图形选项题**：选项是图片时，页内 fetch 各选项 `img`（credentials:'include'）→ 画到
+  合成 canvas 排成 2×2 网格 → `toDataURL` 出**单图** → vision 一次读四选项
+  （9.10 期末实测，首提满分）。比逐图读省 vision token，也避免选项错位。
+- **err=3 解码错误**：与 err=2 同配方（帧遍历 `video.load()` + muted + `play()`），
+  代价同为整集重播（seek 有锁速风控风险，不做）。
+- **提交卡「提交中」+ 掉登录**：整页刷新到 passport2 → 用交付凭据自助重登 → 回学习页，
+  视频从服务器心跳位置续播（**凭据自助登录的实战验证**，零人工介入）。
+- **sleep 模式定稿**：Bash sleep 540–570（工具上限 600s）+ 醒来单次读信标；全课
+  ~450–480 次调用 vs 纯轮询估算 670+（省 ~30%）；"5–10 分钟一查"单会话不可行
+  （120s 工具上限未变），但模型侧等待 token 近零。
+- **【2026-09-18 重要修正】重做可用性因课程而异，提交后必须探测而不是假设**：
+  - 课程②型：结果页**明文列出每题正解** + 「重做(剩余 N 次)」按钮 → 重做修正到满分；
+  - **课程③型（6.5 实测）**：结果页**无明文正解、无重做按钮**（HTML 无 redo 标记），
+    retest 接口返回「作答状态或作答次数已变化」→ **重做通道死路**；
+  - 及格线可能是 0（页面 JS `passingStandard="0"`）→ 低分照样点亮任务点。
+  处置：提交后先探测有无明文正解/重做入口 → 有则按重做流程修正到满分；
+  无则记录 `wrongItems` 后**接受成绩推进**（任务点已点亮），把"是否人工重做"留给用户决定。
+
+## 12. 字体混淆：明文通道与映射表自举【实测 2026-09-17】
+
+- **明文通道（关键发现）**：字体混淆只在**待作答态**；**提交后**页面明文显示全部题干 +
+  我的答案 + 正确答案（含讲解）→ 这是自建字库的免费来源。
+- 自举流程（工具 `scripts/fontmap-merge.mjs`，纯 Node、无依赖、含 `--self-test`）：
+  1. 作答前取 `.TiMu` 的 `innerText`（乱码）存 `obf.txt`；
+  2. 提交后取同一批题目明文存 `plain.txt`（行序、行数一致）；
+  3. `node scripts/fontmap-merge.mjs --obfuscated obf.txt --plain plain.txt`
+     → 逐行逐字符对齐、投票合并进 `knowledge/cx-font-map.json`（冲突会打印供复核）；
+  4. 暖机后：`node scripts/fontmap-merge.mjs --decode <乱码文本>` 直接得到明文。
+- 效果：读题从"每张截图约 1–1.5k vision token"降到"文本解码 ~50 token/题"；
+  **两门课已累计 120+ 张题图**，是本项目最大的 token 开销来源。
+- 备注：`aria-label` 通道仅部分明文（同一页 Q1 明文、Q4 混淆），只能辅助。
+- 合规：属"自己积累的知识"，不改倍速、不碰进度接口。
+- **【实战判负 2026-09-17】混淆是按页随机的**：同一个"题"字在 3.6 页映射为「嶋」、
+  3.7 页为「戮」；3.6 页自举 +30 条（5→35）仅页内有效，跨页复用命中 **0/218**
+  → **全局映射路线不成立**，工具降级为"页内辅助"（同页重读/重做场景仍省），
+  不再投入跨页方向。
+- **【canvas 逐字符渲染配方（2026-09-18 实测修正，1.5 十题首答满分）】**：
+  混淆字符在**独立 span** 里（多选选项 class `num_option_dx`、判断题选项带 `data=true/false`）
+  → 不能整段 `fillText`，必须**逐文本节点取 computed font、逐字符绘制**；
+  canvas 建在 **TiMu 所在帧文档**（@font-face 只在帧内）；先填白背景再 `fillStyle='#111'`
+  （透明底 + 深色字会不可读）。此配方 + 课程立场口径 → 1.5 首答即 100 分，未用重做。
+
+## 13. 跨源 iframe 定位配方与探索预算【实测】
+
+| 配方 | 写法 | 适用/判据 |
+|---|---|---|
+| A（首选） | `playwright.frameLocator("#frame_content-zj").locator("body").evaluate(...)` | 实测可用；学习页 `#iframe`(cards) 与 `.ans-insertvideo-online` 同为 frameLocator 链 |
+| B（fallback） | `domSnapshot()` 读整棵 DOM | 另一环境下唯一通道；**输出巨大，只在 A 失败时用，用完即弃** |
+| C（页面内） | 帧内 `el.click()` / canvas `fillText` → `toDataURL` | 点击与取题一律走它（播放器按钮 actionability 超时；截图通道受限） |
+
+**探索预算**：同一障碍连续失败 2 次即停手 → 记 field-notes + 用 fallback 继续推进。
+实测教训：有会话在同一跨源障碍上连试 4–5 次，纯烧上下文。
+
+## 14. 登录自持：凭据交付与自助重登【2026-09-17 用户授权】
+
+- 策略（安全规则第 11 条）：开工前向用户索取**本次**账号与凭据（账密或扫码）；
+  **获交付后监督者自行登录、掉线自行重登，不再逐次询问**；凭据只经环境变量或
+  `credentials.local.json`（本地、gitignore），绝不入库/日志/外发；每次运行开始仍确认账号。
+- 自检节奏：进入课程前 + 每完成一章，做一次廉价检查（请求课程列表/目录页，看是否被重定向到
+  登录页）。实测教训：登录态曾在半途失效并被重定向到 `passport2.chaoxing.com/login`，
+  直接卡住整轮任务。
+- 重登通道（学习通）：IAB 内用交付的账密走登录表单；若出现滑块/验证码 → 按 §7 取图交用户
+  （或按 `captchaPolicy`）。icourse163：Runner 自适应链（会话 → 密码 → 短信 → 扫码）。
+- 自助失败（密码错/风控拒绝/验证码超时）才回问用户；**绝不复用上次运行的残留凭据**。
+- 登录健康判据（2026-09-17 修正）：学习页顶层**不显示用户名**，不能以"找不到用户名"判失效；
+  用页面骨架判断（host=`mooc1.chaoxing.com` 且当前非登录页 = 正常）。曾发生探针误报一次。

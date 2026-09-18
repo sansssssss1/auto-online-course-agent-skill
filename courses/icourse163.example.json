@@ -12,8 +12,8 @@
     "maxRate": 2,
     "captchaPolicy": "user",
     "captchaPolicy$comment": "icourse163 只有易盾滑块（无图形码），策略固定为人工：滑块一律不自动对抗，处理方式=扫码登录重建登录态（SKILL.md 安全规则第 9 条）",
-    "quizPolicy": "read-all-confirm-with-user-then-submit-once",
-    "quizPolicy$comment": "比学习通更严：测验限次，全部读题→拟答案→用户确认→只提交一次（SKILL.md §4.1）",
+    "quizPolicy": "read-rules-then-attempt-by-authorization",
+    "quizPolicy$comment": "测验限次且限时：先读规则横幅（可尝试次数/限时/有效提交次数），默认首答前向用户确认；用户已授权「限次取最高、尽量拿高分」的课程可自行推进。结果页正解可能被教师隐藏——无修正依据时不盲目重做（SKILL.md §4.6，2026-09-18 实测）",
     "activeHours": ["08:00", "23:00"]
   }
 }
