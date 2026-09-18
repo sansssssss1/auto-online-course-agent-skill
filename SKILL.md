@@ -279,7 +279,8 @@ MOOC_PROFILE_DIR="<profile 绝对路径>" node runner.mjs --course ../../courses
 2. **读题优先级**：① `knowledge/cx-font-map.json` 自举映射解码 DOM 文本（最省；暖机后首选，
    解码命令 `node scripts/fontmap-merge.mjs --decode <file>`）；② 页面内 canvas 渲染 PNG
    （文本节点按 computed font `fillText` 后 `toDataURL`）；③ `aria-label` 通道（仅部分明文）；
-   ④ 截图（IAB 进入学习页后通常不可用）。**提交后页面显示明文题干 + 我的答案 + 正确答案**
+   ④ 截图（IAB 进入学习页后通常不可用）；⑤ **图形选项题**：页内 fetch 选项 img →
+   合成 2×2 网格 canvas → 单图 vision 读（9.10 期末测验实测，首提满分）。**提交后页面显示明文题干 + 我的答案 + 正确答案**
    → 立刻用 `scripts/fontmap-merge.mjs` 自举映射（越跑越省 token）。
 3. 逐题读题、记录答案倾向；全部读完再统一作答（最内层 `#frame_content` 按题目索引点选项
    radio，校验 hidden `input[name='answer{qid}']`；`answertype` 0=单选 1=多选）。
@@ -393,6 +394,13 @@ Runner 模式下 Runner 以 `quiz-popup` 停下（不代答），监督者按上
   （混淆按页随机，跨页复用命中 0/218，降级为页内辅助，不再投入）；测验策略升级为
   「尽量拿高分、重做自行推进」（用户授权，0 分不点亮任务点的课程②口径已入册）。
   新发现 **IAB 前台红线**（切标签停摆视频，`hasFocus()` 不可作判据）已入册 §3.3。
-  待验证：巡检阶梯 v2 的调用数下降幅度（目标 400+ → ~100–150）。
+  **收官验证（2026-09-18，课程③ 67/67 完成，三课 195/195）**：beacon v1.1 全程有效
+  （qw 答错滞留层实战拦截漏答；整门课一次注入）；sleep 模式定稿——Bash sleep 540–570s
+  （工具上限 600s）+ 醒来单次读信标，全课 ~450–480 次调用 vs 纯轮询估算 670+（省 ~30%，
+  干净段省 2/3）；"5–10 分钟一查"单会话不可行（120s 工具上限），但模型侧 token 近零。
+  重做策略修正为**按课程探测**：课程②型（明文正解 + 重做按钮）修正到满分；课程③型
+  （无重做入口、及格线 0）接受当前分数推进。图形选项题配方（fetch 选项 img 合成
+  2×2 网格 → vision 单图读）首用即满分。凭据自助登录实战验证：提交卡死 + 掉登录 →
+  刷新 + 自助重登 + 服务器心跳续播，零人工。
 - 多平台知识库：knowledge/chaoxing.md（全流程验证）、knowledge/icourse163.md（视频/文档验证）
 - 新发现的坑一律进 `docs/field-notes.md`（只追加），这是本项目的测试用例库
