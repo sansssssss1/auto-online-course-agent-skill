@@ -111,8 +111,10 @@
       if (video) {
         s.hasVideo = true;
         try {
-          // 只做静音保持；不碰 play/pause/playbackRate
-          if (!video.muted) video.muted = true;
+          // 不碰 muted（本项目的本地改动）：cx-watcher.js 故意用"音量 0.001 的有声播放"
+          // 来避免 Chrome 对"后台静音媒体"的省电暂停；这里若静音会把播放重新推回
+          // "video-only background media was paused to save power"（2026-09-21 实测，
+          // 表现为视频反复瞬时暂停、偶发长时间停滞）。其余只读不动。
           s.t = video.currentTime; s.d = video.duration;
           s.paused = video.paused; s.ended = !!video.ended;
           s.rate = video.playbackRate; s.muted = video.muted;
