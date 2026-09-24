@@ -775,3 +775,41 @@ sleep 模式（Bash sleep 过渡 + 单次读信标）实战中。三条新知识
   ②指令/状态文件路径统一放同一目录并在脚本内删改（本轮 cmd.json 因 rename 路径错
   被反复重复执行）；③僵尸会话的 verify 结果会误导排查——先查进程再信文件。
 - 状态：已解决（kill-mooc-edge.ps1 按 CommandLine 过滤只杀本任务 Edge，不伤用户浏览器）
+
+### 2026-09-24 14:47 — 【学习通·坑】卡片默认只渲染「学习目标」部件 → 兜底逻辑在上一节残留播放器上「假播放」整段（该节不计分）
+
+- 环境：`mooc1.chaoxing.com/mycourse/studentstudy?chapterId=1243911417`（《东南亚文化》9.1
+  「西方文化在东南亚的传播（上）」；courseid 267014424 / clazzid 154566705 / cpi 485081334）；
+  帧链 顶层 → `iframe#iframe`（knowledge/cards）→ `iframe.ans-attach-online.ans-insertvideo-online`
+  （ananas/modules/video/index.html，同源可跨层）
+- 现象：信标全程正常（`t` 每秒 +1、`p=0`、无弹题），watcher 日志也正常打印
+  「开始播放 时长=1324s」→「播放完成 t=1324」；但平台「已完成任务点」只 64→65
+  （同一轮 8.1 计上了、9.1 没计上），9.1 章节树仍是「1个待完成任务点」。
+- 原文引用：学习页顶部部件栏 `1学习目标 2视频 3章节测验`；点「2视频」**之前** 卡片
+  `mArg.attachments === []`、卡片内 0 个 iframe、无 `<video>`；点**之后**
+  `attachments = [{objectId:"3a0c74682c6b28ddb210ba0dee246d37", type:"video"}]` 并出现可见视频
+  iframe（9.1 真实视频源 `…/b28ddb210ba0dee246d37/sd.mp4?at_=…`，时长 1323s）。
+- 根因：① 该节卡片**默认只渲染第 1 个部件（学习目标）**，视频部件按需加载 —— 顶层 `li`
+  文本形如「2视频」，`onclick="changeDisplayContent(2,3,'{kid}','{courseid}','{clazzid}','')"`；
+  ② 兜底点击器只匹配纯文本「视频/任务点」（`/^视频$/` 等），**匹配不到带序号的「2视频」**；
+  ③ 于是走「附件数=0 → 全帧树轮询找 video」分支，命中**上一节遗留的旧 `<video>`**（8.1 的播放器，
+  时长 1324s）——本课相邻两节时长只差 1s，日志/信标完全无法区分，但平台侧没有本节心跳，任务点不动。
+- 解决/绕过（实测有效）：① 先点顶层 `onclick` 含 `changeDisplayContent` 的「2视频」`li`；
+  ② 等 `video.duration > 0`（首帧 `readyState=0`、`networkState=1`、大播放按钮
+  `.vjs-big-play-button` 可见）；脚本 `v.play()`（`muted=false` + `volume=0.001`）即可加载并起播，
+  **不需要真实鼠标点击**（Playwright 对 `.vjs-big-play-button` 的 actionability 点击反而超时）；
+  ③ **播前验身份**：`v.currentSrc` 必须含本节 `mArg.attachments[].objectId` 的片段
+  （本例 `b28ddb210ba0dee246d37`），**别拿「时长接近」当判据**；
+  ④ 播完该节章节树计数立即 1→0、平台计数 66/66。
+- 状态：已解决（9.1 按上述配方补看后计分；识别此坑后该课 66/66 收官）
+
+### 2026-09-24 — 【学习通·修正】弹题滞留时长实测远长于「1.5~3 分钟」口径（362s / 546s）
+
+- 环境：同课程《东南亚文化》，数据源 `localStorage.cx_quiz_log`（弹题流水：appear/gone + holdSec + 作答快照）
+- 现象：① 7.1 的「交趾密香纸」题 13:14:55 出现 → 13:20:57 消失（`heldSec=362`、`answered=null` =
+  没答就没了）；② 8.1 的「伊斯兰教的传播…」题 13:44:14 出现 → 13:53:20 消失（`heldSec=546`，
+  是**被答掉**才消失的，作答时题已挂了 9 分钟）。
+- 结论：弹题寿命因课程/题量而异，**3 分钟不是硬上限**，9~10 分钟一轮的巡检仍可能抓到并答掉；
+  但「未答上可能作废该节视频任务点」的风险不变 → 仍按「q=1/qw=1 优先、出现即答」执行，
+  真正的保险是**题库命中的题由 bridge 在 2s 内自动作答**（本题库 `cx_quiz_answers` 已累积 38 条）。
+- 状态：口径修正（knowledge/chaoxing.md §11.3 已同步）
