@@ -295,9 +295,16 @@ Runner 不代答。监督者用 playwright-core 无头 + 同 `MOOC_PROFILE_DIR` 
 
 ### 5.1 章节测验 / 作业
 
+> **批量代做（一节课几十节测验）**：直接照 `knowledge/chaoxing.md` §15~§17 的流水线做——
+> canvas 整段出图读题、选项按「显示字母」点（显示值与内部值被平台打乱）、提交两步且
+> 中间**不要**调 `closeDeleteWindow()`、注意「附件打开次数上限＝每节只有一次机会」；
+> 补分扫描用 `forceIdx` 白名单（树计数「1」会被误判成视频已完成）；弹题出现即答，
+> 题库命中的题由 bridge 在 2 s 内自动答（未答上大概率该节视频白播）。
+
 **学习通**（实测流程，2026-09-16/17 更新）：
 1. 弹「当前章节还有任务点未完成」→ 调页面自身 `closeDeleteWindow()` 关闭
-   （同名 `.popClose` 有多个，必须限定作用域）。
+   （同名 `.popClose` 有多个，必须限定作用域）。**注意：只能在点「提交」之前调**，
+   提交与确认层之间调会把「确认提交？」层一起关掉、提交静默失败（2026-09-24 实测）。
 2. **读题优先级**：① `knowledge/cx-font-map.json` 自举映射解码 DOM 文本（最省；暖机后首选，
    解码命令 `node scripts/fontmap-merge.mjs --decode <file>`）；② 页面内 canvas 渲染 PNG
    （文本节点按 computed font `fillText` 后 `toDataURL`）；③ `aria-label` 通道（仅部分明文）；
