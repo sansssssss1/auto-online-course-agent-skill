@@ -17,9 +17,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const STATE = path.join(__dirname, 'state.json');
-const LOGF = path.join(__dirname, 'runner.log');
+// 数据目录（state.json / runner.log 的落点）可用 MOOC_AGENT_DATA 外置，实现“数据与代码分离”，
+// 避免运行产物混进代码仓库、也便于把仓库整体放进可一键删除的沙箱目录。
+// 默认值 __dirname：不设环境变量时与上游完全一致（文件名也保持 state.json / runner.log 不变）。
+const DATA_DIR = process.env.MOOC_AGENT_DATA || __dirname;
+const STATE = path.join(DATA_DIR, 'state.json');
+const LOGF = path.join(DATA_DIR, 'runner.log');
 const PROFILE_DIR = process.env.MOOC_PROFILE_DIR || path.join(__dirname, 'edge-profile');
+// 模块加载期就确保数据目录存在：saveState()/log() 都是同步写，父目录缺失会直接抛 ENOENT；
+// 放在常量之后、首次写文件之前，默认目录已存在时 recursive 创建是无副作用的空操作。
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const COURSE = (() => {
   const i = process.argv.indexOf('--course');
