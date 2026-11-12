@@ -90,6 +90,24 @@ async function tryPasswordLogin163(page, account) {
   } catch (e) { log('password channel error: ' + e.message.slice(0, 120)); return false; }
 }
 
+// ---------- 尽早静音 ----------
+// connectOverCDP 复用调用方已开的浏览器时拿不到 --mute-audio 启动参数，
+// 只能在任务点点开的那一刻抢先静音，否则视频已起播、实测漏出约 1 秒声音。
+async function earlyMute(page) {
+  const muteOnce = async () => {
+    try {
+      await page.evaluate(() => {
+        document.querySelectorAll('video, audio').forEach(el => { el.muted = true; el.volume = 0; });
+      });
+    } catch { /* 页面未就绪/正在跳转：静默忽略，交给后续轮询与 ensurePlaying 兜底 */ }
+  };
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) { // 视频元素可能还没挂载：200ms 一轮，最多 5s
+    await muteOnce();
+    await sleep(200);
+  }
+}
+
 async function main() {
   log('runner start (repo build), profile=' + PROFILE_DIR + ', course=' + state.course);
   if (!COURSE || !COURSE.courseUrl) {
@@ -364,6 +382,7 @@ async function main() {
       const ic = document.querySelector(`.f-icon.lsicon[data-cid="${cid}"]`);
       ic.click();
     }, task.cid);
+    await earlyMute(page); // 点开任务点后立刻抢先静音（期间起播也听不到）
     await page.waitForTimeout(4000);
     for (let i = 0; i < 8 && await page.locator('video').count() === 0; i++) await page.waitForTimeout(1500);
     if (!(await ensurePlaying())) {
