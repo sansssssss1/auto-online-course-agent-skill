@@ -314,6 +314,22 @@ async function main() {
     return !!st && !st.paused;
   };
 
+  // 起播/恢复前只读探测驻点题：弹题出现时 video 必然 paused，
+  // 若放任 ensurePlaying 连点+reload，会连弹题覆盖层和已答状态一起刷掉（不可恢复）。
+  // 只做 querySelector + 可见性计数，绝不 click / dispatchEvent / 改 DOM / 提交。
+  const detectQuizPopup = async (page) => {
+    try {
+      return await page.evaluate(() => {
+        const sel = '.u-questionItem, .m-choiceQuestion, .m-subjectiveQuestion, .m-fillblankQuestion, .j-questionItem';
+        const items = Array.from(document.querySelectorAll(sel)).filter((el) => {
+          if (el.offsetParent !== null) return true;
+          return el.getBoundingClientRect().width > 0;
+        });
+        return items.length ? { count: items.length } : null;
+      });
+    } catch { return null; }
+  };
+
   const setRateViaUI = async () => {
     try {
       await page.evaluate(() => {
@@ -366,6 +382,15 @@ async function main() {
     }, task.cid);
     await page.waitForTimeout(4000);
     for (let i = 0; i < 8 && await page.locator('video').count() === 0; i++) await page.waitForTimeout(1500);
+    // 起播前先查弹题：命中即结束本节，不能让 ensurePlaying 的 reload 把题目覆盖层刷掉
+    const preQuiz = await detectQuizPopup(page);
+    if (preQuiz) {
+      state.paused = 'quiz-detected';
+      state.pausedDetail = `${task.lesson} 起播前检测到驻点题 ${preQuiz.count} 道，需人工作答后重跑`;
+      saveState();
+      log(`VIDEO ${task.lesson} quiz popup before play (count=${preQuiz.count}) -> pause, no reload`);
+      return false;
+    }
     if (!(await ensurePlaying())) {
       state.paused = 'video-stuck'; state.pausedDetail = `${task.lesson} 无法启动播放`;
       saveState(); return false;
@@ -391,6 +416,15 @@ async function main() {
       }
       if (st.ended) { log(`VIDEO ${task.lesson} ended`); break; }
       if (st.paused) {
+        // 暂停可能是弹题而非卡死：先只读确认，命中就停在这一节，避免 reload 冲掉答题状态
+        const quiz = await detectQuizPopup(page);
+        if (quiz) {
+          state.paused = 'quiz-detected';
+          state.pausedDetail = `${task.lesson} 播放中检测到驻点题 ${quiz.count} 道，需人工作答后重跑`;
+          saveState();
+          log(`VIDEO ${task.lesson} quiz popup (count=${quiz.count}) -> pause, no reload`);
+          return false;
+        }
         if (!(await ensurePlaying())) { state.paused = 'video-stuck'; state.pausedDetail = task.lesson; saveState(); return false; }
         continue;
       }
