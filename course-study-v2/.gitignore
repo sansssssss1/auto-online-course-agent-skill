@@ -1,0 +1,14 @@
+local/
+.env
+.env.*
+runs/
+profiles/
+_validation/
+dist/
+node_modules/
+__pycache__/
+*.pyc
+credentials.local.json
+**/state.json
+**/runner.log
+**/edge-profile/
